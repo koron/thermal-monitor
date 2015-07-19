@@ -13,6 +13,10 @@ if (APP.SITE in kii.KiiSite) {
 }
 var THING = JSON.parse(fs.readFileSync(THING_JSON));
 
+function ts() {
+  return new Date().toLocaleString();
+}
+
 function registerThing(id, password, type, savePath) {
   return kii.KiiThing.register({
     _vendorThingID: id,
@@ -75,7 +79,7 @@ function startMonitor(thing) {
   }, 1000)
   var monitor = new BlecastTM();
   monitor.on('data', function(data) {
-    //console.log(new Date().toLocaleString(), 'BlecastTM', data);
+    //console.log(ts(), 'BlecastTM', data);
     putData(data.temp);
   });
   //setInterval(putDummyData, 1000);
@@ -147,11 +151,12 @@ function saveData(bucket, time, minend) {
 
   return promise.then(
     function(obj) {
-      //console.log(new Date().toLocaleString(), 'saveData OK:', 'id=' + id, 'min=' + min, 'val=' + val);
+      //console.log(ts(), 'saveData OK:', 'id=' + id, 'min=' + min, 'val=' + val);
     },
     function(err) {
-      console.error(new Date().toLocaleString(), 'saveData NG:',
-          err.toString());
+      console.error(ts(), 'saveData NG:', err.toString());
+      cacheID = null;
+      cacheObj = null;
     }
   );
 }
@@ -177,7 +182,7 @@ function putData(val) {
 function putDummyData() {
   var v = Math.random() * 20 + 10;
   putData(v);
-  //console.log(new Date().toLocaleString(), 'dummy: ', v);
+  //console.log(ts(), 'dummy: ', v);
 }
 
 kii.Kii.initializeWithSite(APP.ID, APP.KEY, APP.SITE);
