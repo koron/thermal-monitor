@@ -73,7 +73,11 @@ function startMonitor(thing) {
       saveData(bucket, t, false);
     }
   }, 1000)
-  (new BlecastTM()).on('data', function(data) { putData(data.temp); });
+  var monitor = new BlecastTM();
+  monitor.on('data', function(data) {
+    //console.log(new Date().toLocaleString(), 'BlecastTM', data);
+    putData(data.temp);
+  });
   //setInterval(putDummyData, 1000);
 }
 
