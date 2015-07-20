@@ -47,7 +47,7 @@ function loadThing(id, password) {
   );
 }
 
-function exponentialBackoff(fn, maxRetry, interval, retryCount) {
+function exponentialBackoff(name, fn, maxRetry, interval, retryCount) {
   if (interval == null) {
     interval = 1000;
   }
@@ -55,16 +55,21 @@ function exponentialBackoff(fn, maxRetry, interval, retryCount) {
     retryCount = 0;
   }
   return fn().then(
-    function(value) { return Promise.resolve(value); },
+    function(value) {
+      if (retryCount > 0) {
+        console.log(ts(), name, "success with retry (" + retryCount + '/' + maxRetry + ")");
+      }
+      return Promise.resolve(value);
+    },
     function(error) {
       if (retryCount >= maxRetry) {
         return Promise.reject(error);
       }
       return new Promise(function(fulfill, reject) {
         ++retryCount;
-        console.log(ts(), "retring (" + retryCount + '/' + maxRetry + ") after " + interval + " msecs:", error);
+        console.log(ts(), name, "retry (" + retryCount + '/' + maxRetry + ") after " + interval + " msecs:", error);
         setTimeout(function() {
-          exponentialBackoff(fn, maxRetry, interval * 2, retryCount).then(
+          exponentialBackoff(name, fn, maxRetry, interval * 2, retryCount).then(
             function(value) { fulfill(value); },
             function(error) { reject(error); }
           );
@@ -214,9 +219,9 @@ function putDummyData() {
 
 kii.Kii.initializeWithSite(APP.ID, APP.KEY, APP.SITE);
 
-exponentialBackoff(function() {
+exponentialBackoff('setup', function() {
   return setupThing(THING, DATA_JSON);
-}, 5, 500).then(
+}, 5, 100).then(
   function(thing) { startMonitor(thing) },
   function(error) { console.error(ts(), 'setup failed:', error); }
 );
