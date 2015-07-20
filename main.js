@@ -221,7 +221,7 @@ kii.Kii.initializeWithSite(APP.ID, APP.KEY, APP.SITE);
 
 exponentialBackoff('setup', function() {
   return setupThing(THING, DATA_JSON);
-}, 5, 100).then(
+}, 5, 1000).then(
   function(thing) { startMonitor(thing) },
   function(error) { console.error(ts(), 'setup failed:', error); }
 );
