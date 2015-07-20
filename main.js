@@ -1,7 +1,6 @@
 var fs = require('fs');
 
 var kii = require('./lib/kii-cloud-sdk-v2.1.34.js').create();
-var BlecastTM = require('blecast_tm');
 
 var APP_JSON = './app.json';
 var THING_JSON = './thing.json';
@@ -48,6 +47,33 @@ function loadThing(id, password) {
   );
 }
 
+function exponentialBackoff(fn, maxRetry, interval, retryCount) {
+  if (interval == null) {
+    interval = 1000;
+  }
+  if (retryCount == null) {
+    retryCount = 0;
+  }
+  return fn().then(
+    function(value) { return Promise.resolve(value); },
+    function(error) {
+      if (retryCount >= maxRetry) {
+        return Promise.reject(error);
+      }
+      return new Promise(function(fulfill, reject) {
+        ++retryCount;
+        console.log(ts(), "retring (" + retryCount + '/' + maxRetry + ") after " + interval + " msecs:", error);
+        setTimeout(function() {
+          exponentialBackoff(fn, maxRetry, interval * 2, retryCount).then(
+            function(value) { fulfill(value); },
+            function(error) { reject(error); }
+          );
+        }, interval);
+      });
+    }
+  );
+}
+
 function setupThing(thing, savePath) {
   var data;
   try {
@@ -76,7 +102,8 @@ function startMonitor(thing) {
     } else if ((sec % 15) == 14) {
       saveData(bucket, t, false);
     }
-  }, 1000)
+  }, 1000);
+  var BlecastTM = require('blecast_tm');
   var monitor = new BlecastTM();
   monitor.on('data', function(data) {
     //console.log(ts(), 'BlecastTM', data);
@@ -187,7 +214,9 @@ function putDummyData() {
 
 kii.Kii.initializeWithSite(APP.ID, APP.KEY, APP.SITE);
 
-setupThing(THING, DATA_JSON).then(
+exponentialBackoff(function() {
+  return setupThing(THING, DATA_JSON);
+}, 5, 500).then(
   function(thing) { startMonitor(thing) },
-  function(error) { console.error('failed', error) }
+  function(error) { console.error(ts(), 'setup failed:', error); }
 );
