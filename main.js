@@ -6,6 +6,8 @@ var thingif = require('./lib/thing-if-sdk.js');
 var APP_JSON = './app.json';
 var THING_JSON = './thing.json';
 var DATA_JSON = './data.json';
+// GPIO channel number. see http://elinux.org/RPi_Low-level_peripherals#Interfacing_with_GPIO_pins
+var GPIO_18 = 12
 
 var APP = JSON.parse(fs.readFileSync(APP_JSON));
 if (APP.SITE in kii.KiiSite) {
@@ -98,20 +100,9 @@ function exponentialBackoff(name, fn, maxRetry, interval, retryCount) {
 }
 
 function setupThing(thing, savePath) {
-  var data;
-  try {
-    data = JSON.parse(fs.readFileSync(savePath));
-  } catch (err) {
-  }
   var id = thing.VENDOR_ID;
   var pass = thing.PASSWORD;
-  if (data == null) {
-    return registerThing(id, pass, thing.TYPE, savePath).then(
-      function(thing) { return loadThing(id, pass); }
-    );
-  } else {
-    return loadThing(id, pass);
-  }
+  return loadThing(id, pass);
 }
 
 function startMonitor(thing) {
@@ -121,7 +112,7 @@ function startMonitor(thing) {
     var sec = t.getSeconds();
     if ((sec % 60) == 59) {
       BME280.probe(function(temperature, pressure, humidity) {
-        saveData(thing.getID(), {temperature: temperature, humidity: humidity})
+        saveData(thing.getThingID(), {temperature: temperature, humidity: humidity})
       });
     }
   }, 1000);
@@ -130,22 +121,44 @@ function startMonitor(thing) {
 
 function saveData(thingId, state) {
   https = require('https');
+  var path = '/thing-if/apps/'+ APP.ID + '/targets/thing:' + thingId + '/states';
+  console.log("path", path);
   var req = https.request(
       {
         hostname: 'api-jp.kii.com',
         port: 443,
-        path: '/thing-if/apps/'+ APP.ID + '/targets/thing:'
-          + thingId + '/status',
-        method: 'POST',
+        path: path,
+        method: 'PUT',
         headers: {
-          authorization: 'Bearer ' + kii.KiiUser.getCurrentUser().getAccessToken()
+          authorization: 'Bearer ' + kii.KiiUser.getCurrentUser().getAccessToken(),
+          'content-type': 'application/json'
         }
       },
       function(res) {
         console.log(ts(), 'post data status: ' + res.statusCode);
       });
-  req.write();
+  req.write(JSON.stringify(state));
   req.end();
+}
+
+function blinkLED(gpio, port, count) {
+  var current = 0;
+  var on = false;
+  var id = setInterval(function() {
+      if(current == count) {
+        gpio.write(port, false);
+        clearInterval(id);
+      }
+
+      if(on) {
+        gpio.write(port, false);
+        on = false;
+      } else {
+        gpio.write(port, true);
+        on = true;
+        current++;
+      }
+  }, 300);
 }
 
 function startMQTT(onboard) {
@@ -156,17 +169,23 @@ function startMQTT(onboard) {
       {username:endpoint.username, password:endpoint.password, clientId:endpoint.mqttTopic} );
 
   client.on('error', function (error) {
-    console.error("MQTT error ", error);
-  });
-  client.on('connect', function () {
-    console.log(ts(), "connected");
-    client.subscribe(endpoint.mqttTopic);
-  });
+      console.error("MQTT error ", error);
+      });
 
+  client.on('connect', function () {
+      console.log(ts(), "connected");
+      client.subscribe(endpoint.mqttTopic);
+      });
+
+  var gpio = require('rpi-gpio');
+  gpio.setup(GPIO_18, gpio.DIR_OUT);
   client.on('message', function (topic, message) {
-    // message is Buffer 
-    console.log(ts(), message.toString());
-  });
+      // message is Buffer 
+      // message is like {"schema":"prototype","schemaVersion":1,"commandID":"03675d40-7509-11e6-b753-22000b07265b","actions":[{"mythingsAction":{"payload":"{\"test\":0}","id":1}}],"issuer":"user:d009f7a00022-5308-6e11-e443-0222ec98"}
+      msgJSON = JSON.parse(message);
+      console.log(ts(), message.toString());
+      blinkLED(gpio, GPIO_18, msgJSON.actions[0].mythingsAction.id);
+    });
 }
 
 

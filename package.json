@@ -14,6 +14,7 @@
     "es6-promise": "^3.2.1",
     "make-error-cause": "^1.0.1",
     "popsicle": "^8.0.4",
+    "rpi-gpio": "^0.7.0",
     "mqtt": "^1.14.1"
   }
 }
