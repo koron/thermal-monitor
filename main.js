@@ -1,6 +1,7 @@
 var fs = require('fs');
 
 var kii = require('./lib/kii-cloud-sdk-v2.1.34.js').create();
+var thingif = require('./lib/thing-if-sdk.js');
 
 var APP_JSON = './app.json';
 var THING_JSON = './thing.json';
@@ -26,7 +27,12 @@ function registerThing(id, password, type, savePath) {
       fs.writeFileSync(savePath, JSON.stringify({
         THING_ID: thing.getThingID()
       }));
+      console.log(ts(), 'thing :', thing);
       return Promise.resolve(thing);
+    },
+    function(error) {
+      console.error(ts(), 'error :', error);
+      return Promise.reject(error);
     }
   );
 }
@@ -43,6 +49,18 @@ function loadThing(id, password) {
   }).then(
     function(user) {
       return kii.KiiThing.loadWithVendorThingID(THING.VENDOR_ID);
+    }
+  ).then(
+    function(thing) {
+      var apiAuthor = new thingif.APIAuthor(
+          user.getAccessToken(),
+          new thingif.App(
+            kii.Kii.getAppID(),
+            kii.Kii.getAppKey(),
+            "https://api-jp.kii.com")
+          );
+      var onboardRequest = new thingif.OnboardWithVendorThingIDRequest(id, password);
+      return Promise.all([apiAuthor.onboardWithVendorThingID(onboardRequest), thing]);
     }
   );
 }
@@ -97,131 +115,70 @@ function setupThing(thing, savePath) {
 }
 
 function startMonitor(thing) {
-  var bucket = thing.bucketWithName('temperatures');
+  var BME280 = require('node-adafruit-bme280');
   setInterval(function() {
     var t = new Date();
     var sec = t.getSeconds();
     if ((sec % 60) == 59) {
-      saveData(bucket, t, true);
-      resetData();
-    } else if ((sec % 15) == 14) {
-      saveData(bucket, t, false);
+      BME280.probe(function(temperature, pressure, humidity) {
+        saveData(thing.getID(), {temperature: temperature, humidity: humidity})
+      });
     }
   }, 1000);
-  var BlecastTM = require('blecast_tm');
-  var monitor = new BlecastTM();
-  monitor.on('data', function(data) {
-    //console.log(ts(), 'BlecastTM', data);
-    putData(data.temp);
-  });
   //setInterval(putDummyData, 1000);
 }
 
-function format02d(v) {
-  if (v < 10) {
-    return '0' + v;
-  } else {
-    return '' + v;
-  }
+function saveData(thingId, state) {
+  https = require('https');
+  var req = https.request(
+      {
+        hostname: 'api-jp.kii.com',
+        port: 443,
+        path: '/thing-if/apps/'+ APP.ID + '/targets/thing:'
+          + thingId + '/status',
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer ' + kii.KiiUser.getCurrentUser().getAccessToken()
+        }
+      },
+      function(res) {
+        console.log(ts(), 'post data status: ' + res.statusCode);
+      });
+  req.write();
+  req.end();
 }
 
-function getID(time) {
-  return '' + time.getUTCFullYear() +
-      '-' + format02d(time.getMonth() + 1) +
-      '-' + format02d(time.getUTCDate()) +
-      'T' + format02d(time.getUTCHours()) + '0000Z';
-}
+function startMQTT(onboard) {
+  var endpoint = onboard.mqttEndPoint;
+  // console.log("endpoint: ", endpoint);
+  var mqtt    = require('mqtt');
+  var client  = mqtt.connect('mqtt://' + endpoint.host + ':' + endpoint.port,
+      {username:endpoint.username, password:endpoint.password, clientId:endpoint.mqttTopic} );
 
-function getYMDH(time) {
-  return time.getUTCFullYear() * 1000000 + (time.getMonth() + 1) * 10000
-    + time.getUTCDate() * 100 + time.getUTCHours();
-}
+  client.on('error', function (error) {
+    console.error("MQTT error ", error);
+  });
+  client.on('connect', function () {
+    console.log(ts(), "connected");
+    client.subscribe(endpoint.mqttTopic);
+  });
 
-function updateObject(obj, index, value) {
-  var data = obj.get('data');
-  data[index] = value;
-  obj.set('data', data);
-  return obj.save();
-}
-
-function createObject(obj, label, index, value) {
-  var data = [];
-  data[index] = value;
-  obj.set('ymdh', label);
-  obj.set('data', data);
-  return new Promise(function(fulfill, reject) {
-    obj._performUpdate(false, {
-      success: function(obj) { fulfill(obj); },
-      failure: function() {
-        var err = new Error(arguments[1]);
-        err.target = obj;
-        reject(err);
-      }
-    }, true);
+  client.on('message', function (topic, message) {
+    // message is Buffer 
+    console.log(ts(), message.toString());
   });
 }
 
-var cacheID;
-var cacheObj;
-
-function saveData(bucket, time, minend) {
-  var id = getID(time);
-  var min = time.getUTCMinutes();
-  var val = getDataAve();
-  var promise;
-  if (id === cacheID && cacheObj != null) {
-    promise = updateObject(cacheObj, min, val);
-  } else {
-    obj = bucket.createObjectWithID(id);
-    cacheID = id;
-    cacheObj = obj;
-    promise = obj.refresh().then(
-      function(obj) { return updateObject(obj, min, val); },
-      function(err) { return createObject(obj, getYMDH(time), min, val); }
-    );
-  }
-
-  return promise.then(
-    function(obj) {
-      //console.log(ts(), 'saveData OK:', 'id=' + id, 'min=' + min, 'val=' + val);
-    },
-    function(err) {
-      console.error(ts(), 'saveData NG:', err.toString());
-      cacheID = null;
-      cacheObj = null;
-    }
-  );
-}
-
-var values = [];
-
-function getDataAve() {
-  var sum = 0;
-  for (var i = 0; i < values.length; ++i) {
-    sum += values[i];
-  }
-  return sum / values.length;
-}
-
-function resetData() {
-  values = [];
-}
-
-function putData(val) {
-  values.push(val);
-}
-
-function putDummyData() {
-  var v = Math.random() * 20 + 10;
-  putData(v);
-  //console.log(ts(), 'dummy: ', v);
-}
 
 kii.Kii.initializeWithSite(APP.ID, APP.KEY, APP.SITE);
 
 exponentialBackoff('setup', function() {
   return setupThing(THING, DATA_JSON);
 }, 5, 1000).then(
-  function(thing) { startMonitor(thing) },
+  function(resp) {
+      console.log(ts(), resp);
+      startMQTT(resp[0]);
+      startMonitor(resp[1]);
+  },
   function(error) { console.error(ts(), 'setup failed:', error); }
 );
